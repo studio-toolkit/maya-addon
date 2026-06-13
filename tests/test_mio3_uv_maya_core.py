@@ -19,6 +19,7 @@ from mio3_uv_maya.operators.align import (
 from mio3_uv_maya.operators.texel import _density_from_areas, _scale_islands_to_density
 from mio3_uv_maya.operators import all_actions
 import mio3_uv_maya.core.undo as undo_module
+import mio3_uv_maya.core.mesh as mesh_module
 import mio3_uv_maya.operators.arrange as arrange_module
 import mio3_uv_maya.operators.base as base_module
 import mio3_uv_maya.operators.unwrap as unwrap_module
@@ -74,9 +75,10 @@ class FakeMeshFn:
 
 
 class FakeNativeCmds:
-    def __init__(self, selection=None, conversions=None):
+    def __init__(self, selection=None, conversions=None, history_connections=None):
         self.selection = selection or []
         self.conversions = conversions or {}
+        self.history_connections = history_connections or {}
         self.calls = []
 
     def ls(self, *args, **kwargs):
@@ -99,6 +101,17 @@ class FakeNativeCmds:
 
     def polyMapSewMove(self, *args, **kwargs):
         self.calls.append(("polyMapSewMove", tuple(args), dict(kwargs)))
+
+    def polyEditUV(self, *args, **kwargs):
+        self.calls.append(("polyEditUV", tuple(args), dict(kwargs)))
+
+    def listConnections(self, attr, **kwargs):
+        self.calls.append(("listConnections", (attr,), dict(kwargs)))
+        return list(self.history_connections.get(attr, []))
+
+    def listRelatives(self, *args, **kwargs):
+        self.calls.append(("listRelatives", tuple(args), dict(kwargs)))
+        return []
 
 
 def rebuild_fake_topology(obj):
@@ -198,6 +211,7 @@ class TestMio3UVMayaCore(unittest.TestCase):
     def test_uv_position_updates_use_single_batch_write(self):
         mesh_fn = FakeMeshFn()
         obj = MayaUVObject.__new__(MayaUVObject)
+        obj.shape = "meshShape"
         obj.mesh_fn = mesh_fn
         obj.uv_set = "map1"
         obj.uv_positions = {
@@ -211,6 +225,35 @@ class TestMio3UVMayaCore(unittest.TestCase):
         self.assertEqual(mesh_fn.set_uvs_calls, [([0.0, 2.0, 4.0], [0.0, 3.0, 5.0], "map1")])
         self.assertEqual(mesh_fn.set_uv_calls, [])
         self.assertEqual(mesh_fn.update_count, 1)
+        self.assertEqual(obj.uv_positions[1], Vec2(2.0, 3.0))
+        self.assertEqual(obj.uv_positions[2], Vec2(4.0, 5.0))
+
+    def test_uv_position_updates_with_history_use_component_tweaks(self):
+        mesh_fn = FakeMeshFn()
+        obj = MayaUVObject.__new__(MayaUVObject)
+        obj.shape = "meshShape"
+        obj.mesh_fn = mesh_fn
+        obj.uv_set = "map1"
+        obj.uv_positions = {
+            0: Vec2(0.0, 0.0),
+            1: Vec2(1.0, 0.0),
+            2: Vec2(1.0, 1.0),
+        }
+        fake_cmds = FakeNativeCmds(
+            selection=["meshShape.map[0]"],
+            history_connections={"meshShape.inMesh": ["polyTweak1.output"]},
+        )
+
+        with patch.object(mesh_module, "cmds", return_value=fake_cmds):
+            obj.set_uv_positions({1: Vec2(2.0, 3.0), 2: Vec2(4.0, 5.0)})
+
+        self.assertEqual(mesh_fn.set_uvs_calls, [])
+        self.assertEqual(mesh_fn.set_uv_calls, [])
+        self.assertEqual(mesh_fn.update_count, 1)
+        self.assertIn(("listConnections", ("meshShape.inMesh",), {"source": True, "destination": False}), fake_cmds.calls)
+        self.assertIn(("polyEditUV", ("meshShape.map[1]",), {"relative": False, "uValue": 2.0, "vValue": 3.0}), fake_cmds.calls)
+        self.assertIn(("polyEditUV", ("meshShape.map[2]",), {"relative": False, "uValue": 4.0, "vValue": 5.0}), fake_cmds.calls)
+        self.assertEqual(fake_cmds.calls[-1], ("select", (["meshShape.map[0]"],), {"r": True}))
         self.assertEqual(obj.uv_positions[1], Vec2(2.0, 3.0))
         self.assertEqual(obj.uv_positions[2], Vec2(4.0, 5.0))
 

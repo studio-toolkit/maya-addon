@@ -104,6 +104,34 @@ class MayaUVObject:
     def all_uv_ids(self) -> set[int]:
         return set(self.uv_positions.keys())
 
+    def has_incoming_mesh_history(self) -> bool:
+        try:
+            maya_cmds = cmds()
+            return bool(maya_cmds.listConnections("{}.inMesh".format(self.shape), source=True, destination=False))
+        except Exception:
+            return False
+
+    def _set_uv_positions_as_component_tweaks(self, updates: dict[int, Vec2]) -> bool:
+        maya_cmds = cmds()
+        node = self.component_node()
+        selection = maya_cmds.ls(sl=True, fl=True) or []
+        try:
+            for uv_id, uv in sorted(updates.items()):
+                maya_cmds.polyEditUV(
+                    "{}.map[{}]".format(node, uv_id),
+                    relative=False,
+                    uValue=float(uv.x),
+                    vValue=float(uv.y),
+                )
+        except Exception:
+            return False
+        finally:
+            if selection:
+                maya_cmds.select(selection, r=True)
+            else:
+                maya_cmds.select(clear=True)
+        return True
+
     def set_uv_positions(self, updates: dict[int, Vec2]) -> None:
         if not updates:
             return
@@ -117,7 +145,12 @@ class MayaUVObject:
             return
 
         batch_written = False
-        if hasattr(self.mesh_fn, "setUVs"):
+        # History-connected output meshes can be recomputed from inMesh and
+        # overwrite direct MFnMesh UV edits, so write persistent component tweaks.
+        if self.has_incoming_mesh_history():
+            batch_written = self._set_uv_positions_as_component_tweaks(normalized)
+
+        if not batch_written and hasattr(self.mesh_fn, "setUVs"):
             u_values = [self.uv_positions[index].x for index in range(len(self.uv_positions))]
             v_values = [self.uv_positions[index].y for index in range(len(self.uv_positions))]
             for uv_id, uv in normalized.items():
