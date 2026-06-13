@@ -7,8 +7,12 @@ and leaves advanced parity algorithms behind explicit placeholders.
 
 from __future__ import annotations
 
+from . import align
 from .base import Action, warn
+from ..core.gridify import gridify_islands
 from ..core.maya_api import cmds
+from ..core.mesh import MayaUVIslandManager
+from ..core.settings import Settings
 
 
 def maya_unfold():
@@ -42,6 +46,32 @@ def projection_unwrap():
     return True
 
 
+def gridify():
+    manager = MayaUVIslandManager.from_selection()
+    if not manager.islands:
+        warn("Select quad UV shells first.")
+        return False
+
+    settings = Settings.load()
+    result = gridify_islands(
+        manager.islands,
+        ratio_influence=settings.gridify_ratio_influence,
+        shape_blend=settings.gridify_shape_blend,
+    )
+    if result.quad_islands <= 0:
+        warn("Gridify needs at least one quad UV island.")
+        return False
+
+    if settings.gridify_normalize:
+        align.normalize(keep_aspect=settings.gridify_keep_aspect)
+
+    if result.changed_islands <= 0 and result.already_rectangular:
+        warn("Gridify found only already rectangular quad islands.")
+    elif result.changed_islands <= 0:
+        warn("Gridify did not change the current selection.")
+    return True
+
+
 def not_ready(name: str):
     warn("{} is scaffolded for the parity phase and is not implemented yet.".format(name))
     return False
@@ -51,8 +81,7 @@ ACTIONS = [
     Action("unwrap", "Unwrap", "Use Maya unfold on the current selection.", maya_unfold, "unwrap"),
     Action("unwrap_project", "Project", "Planar project selected faces.", projection_unwrap, "camera"),
     Action("straight", "Straight", "Parity placeholder.", lambda: not_ready("Straight"), "straight"),
-    Action("gridify", "Gridify", "Parity placeholder.", lambda: not_ready("Gridify"), "grid"),
+    Action("gridify", "Gridify", "Align selected quad UV shells into a grid.", gridify, "grid"),
     Action("rectify", "Rectify", "Parity placeholder.", lambda: not_ready("Rectify"), "rectify"),
     Action("virtual_mirror", "Virtual Mirror", "Parity placeholder.", lambda: not_ready("Virtual Mirror"), "mirror_uv"),
 ]
-

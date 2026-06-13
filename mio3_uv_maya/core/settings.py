@@ -50,6 +50,10 @@ class Settings:
     texture_size_link: bool = True
     texel_density: float = 256.0
     texel_preset_buttons: bool = False
+    gridify_ratio_influence: float = 0.5
+    gridify_shape_blend: float = 0.0
+    gridify_normalize: bool = False
+    gridify_keep_aspect: bool = False
 
     @classmethod
     def load(cls) -> "Settings":
@@ -65,11 +69,17 @@ class Settings:
             texture_size_link=bool(int(get_option("textureSizeLink", 1))),
             texel_density=float(get_option("texelDensity", 256.0)),
             texel_preset_buttons=bool(int(get_option("texelPresetButtons", 0))),
+            gridify_ratio_influence=float(get_option("gridifyRatioInfluence", 0.5)),
+            gridify_shape_blend=float(get_option("gridifyShapeBlend", 0.0)),
+            gridify_normalize=bool(int(get_option("gridifyNormalize", 0))),
+            gridify_keep_aspect=bool(int(get_option("gridifyKeepAspect", 0))),
         )
 
     def save(self) -> None:
         if self.checker_map_size not in DEFAULT_TEXTURE_SIZES:
             self.checker_map_size = "2048"
+        self.gridify_ratio_influence = max(0.0, min(float(self.gridify_ratio_influence), 1.0))
+        self.gridify_shape_blend = max(0.0, min(float(self.gridify_shape_blend), 1.0))
         set_option("alignMode", self.align_mode)
         set_option("udim", self.udim)
         set_option("symmetryUvAxis", self.symmetry_uv_axis)
@@ -81,4 +91,7 @@ class Settings:
         set_option("textureSizeLink", self.texture_size_link)
         set_option("texelDensity", self.texel_density)
         set_option("texelPresetButtons", self.texel_preset_buttons)
-
+        set_option("gridifyRatioInfluence", self.gridify_ratio_influence)
+        set_option("gridifyShapeBlend", self.gridify_shape_blend)
+        set_option("gridifyNormalize", self.gridify_normalize)
+        set_option("gridifyKeepAspect", self.gridify_keep_aspect)

@@ -1,10 +1,12 @@
 import math
 import unittest
+from collections import defaultdict
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from mio3_uv_maya.core.mathutils import Bounds2D, Vec2, Vec3, polygon_area
 from mio3_uv_maya.core.mesh import FaceRecord, MayaUVIsland, MayaUVIslandManager, MayaUVObject
+from mio3_uv_maya.core.gridify import gridify_island, gridify_islands
 from mio3_uv_maya.operators.base import Action
 from mio3_uv_maya.operators.align import (
     _align_edge_groups,
@@ -18,6 +20,7 @@ from mio3_uv_maya.operators import all_actions
 import mio3_uv_maya.core.undo as undo_module
 import mio3_uv_maya.operators.arrange as arrange_module
 import mio3_uv_maya.operators.base as base_module
+import mio3_uv_maya.operators.unwrap as unwrap_module
 
 
 class FakeUVObject:
@@ -94,6 +97,52 @@ class FakeNativeCmds:
         self.calls.append(("polyMapSewMove", tuple(args), dict(kwargs)))
 
 
+def build_grid_object(columns, rows, uv_positions=None, vertex_positions=None):
+    obj = FakeUVObject({})
+    obj.vertex_positions = {}
+    obj.faces = []
+    obj.uv_to_faces = defaultdict(set)
+    obj.edge_to_faces = defaultdict(list)
+
+    for row in range(rows + 1):
+        for column in range(columns + 1):
+            vertex_id = row * (columns + 1) + column
+            position = vertex_positions.get(vertex_id) if vertex_positions else None
+            obj.vertex_positions[vertex_id] = position or Vec3(float(column), float(row), 0.0)
+            obj.uv_positions[vertex_id] = (uv_positions or {}).get(vertex_id, Vec2(float(column), float(row)))
+
+    for row in range(rows):
+        for column in range(columns):
+            face_id = row * columns + column
+            bl = row * (columns + 1) + column
+            br = bl + 1
+            tl = bl + columns + 1
+            tr = tl + 1
+            face = FaceRecord(face_id, [bl, br, tr, tl], [bl, br, tr, tl])
+            obj.faces.append(face)
+            for uv_id in face.uv_ids:
+                obj.uv_to_faces[uv_id].add(face.face_id)
+            for local_index, vertex_id in enumerate(face.vertex_ids):
+                next_index = (local_index + 1) % 4
+                edge = tuple(sorted((vertex_id, face.vertex_ids[next_index])))
+                obj.edge_to_faces[edge].append((face.face_id, local_index, next_index))
+    return obj
+
+
+def assert_grid_lines(test_case, obj, columns, rows):
+    for row in range(rows + 1):
+        ids = [row * (columns + 1) + column for column in range(columns + 1)]
+        row_y = obj.uv_positions[ids[0]].y
+        for uv_id in ids[1:]:
+            test_case.assertAlmostEqual(obj.uv_positions[uv_id].y, row_y, places=6)
+
+    for column in range(columns + 1):
+        ids = [row * (columns + 1) + column for row in range(rows + 1)]
+        column_x = obj.uv_positions[ids[0]].x
+        for uv_id in ids[1:]:
+            test_case.assertAlmostEqual(obj.uv_positions[uv_id].x, column_x, places=6)
+
+
 class TestMio3UVMayaCore(unittest.TestCase):
     def test_vec2_rotation(self):
         rotated = Vec2(1.0, 0.0).rotated(math.pi / 2.0)
@@ -119,6 +168,7 @@ class TestMio3UVMayaCore(unittest.TestCase):
         self.assertTrue(any(action.id == "align_edges_y" for action in actions))
         self.assertEqual(next(action for action in actions if action.id == "merge").tooltip, "Merge selected UVs within a small distance.")
         self.assertEqual(next(action for action in actions if action.id == "texel_density_set").tooltip, "Scale selected UV shells to the stored texel density.")
+        self.assertEqual(next(action for action in actions if action.id == "gridify").tooltip, "Align selected quad UV shells into a grid.")
 
     def test_single_face_is_one_uv_shell(self):
         obj = MayaUVObject.__new__(MayaUVObject)
@@ -317,6 +367,142 @@ class TestMio3UVMayaCore(unittest.TestCase):
         self.assertEqual(obj.uv_positions[1], Vec2(0.75, -0.25))
         self.assertEqual(obj.uv_positions[2], Vec2(0.75, 0.75))
         self.assertEqual(obj.uv_positions[3], Vec2(-0.25, 0.75))
+
+    def test_gridify_single_distorted_quad_becomes_rectangle(self):
+        obj = build_grid_object(
+            1,
+            1,
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(1.2, 0.2),
+                2: Vec2(-0.1, 1.0),
+                3: Vec2(1.1, 1.15),
+            },
+        )
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(gridify_island(island, ratio_influence=0.0, shape_blend=1.0), "changed")
+
+        face = obj.faces[0]
+        points = [obj.uv_positions[uv_id] for uv_id in face.uv_ids]
+        self.assertAlmostEqual(points[0].y, points[1].y, places=6)
+        self.assertAlmostEqual(points[2].y, points[3].y, places=6)
+        self.assertAlmostEqual(points[0].x, points[3].x, places=6)
+        self.assertAlmostEqual(points[1].x, points[2].x, places=6)
+        self.assertEqual(obj.write_count, 1)
+
+    def test_gridify_two_quad_strip_propagates_grid(self):
+        obj = build_grid_object(
+            2,
+            1,
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(0.9, 0.1),
+                2: Vec2(1.9, 0.35),
+                3: Vec2(0.0, 1.0),
+                4: Vec2(0.95, 1.05),
+                5: Vec2(1.8, 1.25),
+            },
+        )
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(gridify_island(island, ratio_influence=0.0, shape_blend=1.0), "changed")
+
+        assert_grid_lines(self, obj, 2, 1)
+        self.assertLess(obj.uv_positions[0].x, obj.uv_positions[1].x)
+        self.assertLess(obj.uv_positions[1].x, obj.uv_positions[2].x)
+
+    def test_gridify_two_by_two_patch_propagates_grid(self):
+        uv_positions = {}
+        for row in range(3):
+            for column in range(3):
+                uv_id = row * 3 + column
+                uv_positions[uv_id] = Vec2(column + row * 0.12, row + column * 0.08)
+        obj = build_grid_object(2, 2, uv_positions)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(gridify_island(island, ratio_influence=0.0, shape_blend=1.0), "changed")
+
+        assert_grid_lines(self, obj, 2, 2)
+
+    def test_gridify_geometry_ratio_can_force_square_aspect(self):
+        obj = build_grid_object(
+            1,
+            1,
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(2.2, 0.2),
+                2: Vec2(-0.1, 1.0),
+                3: Vec2(2.0, 1.1),
+            },
+        )
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(gridify_island(island, ratio_influence=1.0, shape_blend=1.0), "changed")
+
+        bounds = MayaUVIsland(obj, set(obj.uv_positions)).bounds
+        self.assertAlmostEqual(bounds.width, bounds.height, places=6)
+
+    def test_gridify_evenness_changes_strip_spacing(self):
+        vertex_positions = {
+            0: Vec3(0.0, 0.0, 0.0),
+            1: Vec3(1.0, 0.0, 0.0),
+            2: Vec3(3.0, 0.0, 0.0),
+            3: Vec3(0.0, 1.0, 0.0),
+            4: Vec3(1.0, 1.0, 0.0),
+            5: Vec3(3.0, 1.0, 0.0),
+        }
+        uv_positions = {
+            0: Vec2(0.0, 0.0),
+            1: Vec2(1.0, 0.1),
+            2: Vec2(2.0, 0.3),
+            3: Vec2(0.0, 1.0),
+            4: Vec2(1.0, 1.05),
+            5: Vec2(2.0, 1.2),
+        }
+        even_obj = build_grid_object(2, 1, uv_positions, vertex_positions)
+        geometry_obj = build_grid_object(2, 1, uv_positions, vertex_positions)
+
+        self.assertEqual(gridify_island(MayaUVIsland(even_obj, set(even_obj.uv_positions)), 0.0, 1.0), "changed")
+        self.assertEqual(gridify_island(MayaUVIsland(geometry_obj, set(geometry_obj.uv_positions)), 0.0, 0.0), "changed")
+
+        even_width = MayaUVIsland(even_obj, set(even_obj.uv_positions)).bounds.width
+        geometry_width = MayaUVIsland(geometry_obj, set(geometry_obj.uv_positions)).bounds.width
+        self.assertGreater(geometry_width, even_width)
+
+    def test_gridify_skips_non_quad_faces(self):
+        obj = FakeUVObject(
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(1.0, 0.0),
+                2: Vec2(0.0, 1.0),
+            },
+            faces=[FaceRecord(0, [0, 1, 2], [0, 1, 2])],
+        )
+        obj.uv_to_faces = {0: {0}, 1: {0}, 2: {0}}
+        island = MayaUVIsland(obj, {0, 1, 2})
+
+        self.assertEqual(gridify_island(island), "skipped")
+        self.assertEqual(obj.write_count, 0)
+
+    def test_gridify_operator_runs_normalize_when_enabled(self):
+        settings = SimpleNamespace(
+            gridify_ratio_influence=0.5,
+            gridify_shape_blend=0.0,
+            gridify_normalize=True,
+            gridify_keep_aspect=True,
+        )
+        result = SimpleNamespace(quad_islands=1, changed_islands=1, already_rectangular=0)
+        manager = SimpleNamespace(islands=[object()])
+
+        with patch.object(unwrap_module.Settings, "load", return_value=settings), patch.object(
+            unwrap_module.MayaUVIslandManager, "from_selection", return_value=manager
+        ), patch.object(unwrap_module, "gridify_islands", return_value=result), patch.object(
+            unwrap_module.align, "normalize", return_value=True
+        ) as normalize:
+            self.assertTrue(unwrap_module.gridify())
+
+        normalize.assert_called_once_with(keep_aspect=True)
 
 
 if __name__ == "__main__":

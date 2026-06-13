@@ -76,6 +76,39 @@ class Mio3UVPanel(QtWidgets.QWidget):
         self.texel_density.valueChanged.connect(self._save_texel_density)
         layout.addRow("Texel Density", self.texel_density)
 
+        gridify_box = QtWidgets.QGroupBox("Gridify")
+        gridify_layout = QtWidgets.QFormLayout(gridify_box)
+        gridify_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.gridify_ratio = QtWidgets.QDoubleSpinBox()
+        self.gridify_ratio.setRange(0.0, 1.0)
+        self.gridify_ratio.setDecimals(3)
+        self.gridify_ratio.setSingleStep(0.05)
+        self.gridify_ratio.setValue(float(self.settings.gridify_ratio_influence))
+        self.gridify_ratio.valueChanged.connect(self._save_gridify_ratio)
+        gridify_layout.addRow("Geometry Ratio", self.gridify_ratio)
+
+        self.gridify_evenness = QtWidgets.QDoubleSpinBox()
+        self.gridify_evenness.setRange(0.0, 1.0)
+        self.gridify_evenness.setDecimals(3)
+        self.gridify_evenness.setSingleStep(0.05)
+        self.gridify_evenness.setValue(float(self.settings.gridify_shape_blend))
+        self.gridify_evenness.valueChanged.connect(self._save_gridify_evenness)
+        gridify_layout.addRow("Evenness", self.gridify_evenness)
+
+        self.gridify_normalize = QtWidgets.QCheckBox()
+        self.gridify_normalize.setChecked(bool(self.settings.gridify_normalize))
+        self.gridify_normalize.toggled.connect(self._save_gridify_normalize)
+        gridify_layout.addRow("Normalize", self.gridify_normalize)
+
+        self.gridify_keep_aspect = QtWidgets.QCheckBox()
+        self.gridify_keep_aspect.setChecked(bool(self.settings.gridify_keep_aspect))
+        self.gridify_keep_aspect.setEnabled(bool(self.settings.gridify_normalize))
+        self.gridify_keep_aspect.toggled.connect(self._save_gridify_keep_aspect)
+        gridify_layout.addRow("Keep Aspect Ratio", self.gridify_keep_aspect)
+
+        layout.addRow(gridify_box)
+
         self.symmetry_uv_axis = QtWidgets.QComboBox()
         self.symmetry_uv_axis.addItems(["X", "Y"])
         self.symmetry_uv_axis.setCurrentText(self.settings.symmetry_uv_axis)
@@ -123,6 +156,23 @@ class Mio3UVPanel(QtWidgets.QWidget):
         self.settings.texel_density = float(value)
         self.settings.save()
 
+    def _save_gridify_ratio(self, value):
+        self.settings.gridify_ratio_influence = float(value)
+        self.settings.save()
+
+    def _save_gridify_evenness(self, value):
+        self.settings.gridify_shape_blend = float(value)
+        self.settings.save()
+
+    def _save_gridify_normalize(self, value):
+        self.settings.gridify_normalize = bool(value)
+        self.gridify_keep_aspect.setEnabled(bool(value))
+        self.settings.save()
+
+    def _save_gridify_keep_aspect(self, value):
+        self.settings.gridify_keep_aspect = bool(value)
+        self.settings.save()
+
     def _save_symmetry_uv_axis(self, value):
         self.settings.symmetry_uv_axis = value
         self.settings.save()
@@ -130,4 +180,3 @@ class Mio3UVPanel(QtWidgets.QWidget):
     def _save_symmetry_3d_axis(self, value):
         self.settings.symmetry_3d_axis = value
         self.settings.save()
-
