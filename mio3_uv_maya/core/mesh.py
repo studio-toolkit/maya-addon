@@ -107,9 +107,39 @@ class MayaUVObject:
     def set_uv_positions(self, updates: dict[int, Vec2]) -> None:
         if not updates:
             return
-        for uv_id, uv in updates.items():
-            self.mesh_fn.setUV(int(uv_id), float(uv.x), float(uv.y), self.uv_set)
-            self.uv_positions[int(uv_id)] = Vec2(float(uv.x), float(uv.y))
+
+        normalized = {
+            int(uv_id): Vec2(float(uv.x), float(uv.y))
+            for uv_id, uv in updates.items()
+            if int(uv_id) in self.uv_positions
+        }
+        if not normalized:
+            return
+
+        batch_written = False
+        if hasattr(self.mesh_fn, "setUVs"):
+            u_values = [self.uv_positions[index].x for index in range(len(self.uv_positions))]
+            v_values = [self.uv_positions[index].y for index in range(len(self.uv_positions))]
+            for uv_id, uv in normalized.items():
+                u_values[uv_id] = uv.x
+                v_values[uv_id] = uv.y
+            try:
+                self.mesh_fn.setUVs(u_values, v_values, self.uv_set)
+                batch_written = True
+            except TypeError:
+                try:
+                    self.mesh_fn.setUVs(u_values, v_values)
+                    batch_written = True
+                except Exception:
+                    batch_written = False
+            except Exception:
+                batch_written = False
+
+        if not batch_written:
+            for uv_id, uv in normalized.items():
+                self.mesh_fn.setUV(int(uv_id), float(uv.x), float(uv.y), self.uv_set)
+
+        self.uv_positions.update(normalized)
         self.mesh_fn.updateSurface()
 
     def connected_uv_shells(self) -> list[set[int]]:

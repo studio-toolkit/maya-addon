@@ -40,6 +40,16 @@ def _has_edge_align_selection(manager: MayaUVIslandManager) -> bool:
     return any(bool(kinds.intersection(edge_align_kinds)) for kinds in manager.selection_kinds_by_shape.values())
 
 
+def _queue_update(update_bucket: dict[str, tuple[object, dict[int, Vec2]]], obj, uv_id: int, uv: Vec2) -> None:
+    _obj, updates = update_bucket.setdefault(obj.shape, (obj, {}))
+    updates[int(uv_id)] = uv
+
+
+def _apply_updates(update_bucket: dict[str, tuple[object, dict[int, Vec2]]]) -> None:
+    for obj, updates in update_bucket.values():
+        obj.set_uv_positions(updates)
+
+
 def _selected_bounds(manager: MayaUVIslandManager) -> Bounds2D:
     bounds = Bounds2D()
     for obj in manager.objects:
@@ -85,6 +95,7 @@ def _align_shells(manager: MayaUVIslandManager, kind: str) -> bool:
     target = manager.bounds()
     if not target.is_valid:
         return False
+    update_bucket = {}
     for island in manager.islands:
         bounds = island.bounds
         if not bounds.is_valid:
@@ -102,7 +113,11 @@ def _align_shells(manager: MayaUVIslandManager, kind: str) -> bool:
             dy = target.max_y - bounds.max_y
         elif kind in ("CENTER", "ALIGN_Y"):
             dy = target.center.y - bounds.center.y
-        island.move(Vec2(dx, dy))
+        offset = Vec2(dx, dy)
+        for uv_id in island.uv_ids:
+            if uv_id in island.obj.uv_positions:
+                _queue_update(update_bucket, island.obj, uv_id, island.obj.uv_positions[uv_id] + offset)
+    _apply_updates(update_bucket)
     return True
 
 
@@ -164,18 +179,18 @@ def _align_edge_groups(manager: MayaUVIslandManager, axis: str = "X") -> bool:
         warn("No connected UV edge groups found for Align Edges.")
         return False
 
+    update_bucket = {}
     for group in node_manager.groups:
         bounds = group.bounds
         if not bounds.is_valid:
             continue
-        updates = {}
         for uv_id in group.uv_ids:
             uv = group.obj.uv_positions[uv_id]
             if axis == "Y":
-                updates[uv_id] = Vec2(bounds.center.x, uv.y)
+                _queue_update(update_bucket, group.obj, uv_id, Vec2(bounds.center.x, uv.y))
             else:
-                updates[uv_id] = Vec2(uv.x, bounds.center.y)
-        group.obj.set_uv_positions(updates)
+                _queue_update(update_bucket, group.obj, uv_id, Vec2(uv.x, bounds.center.y))
+    _apply_updates(update_bucket)
     return True
 
 
