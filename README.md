@@ -9,7 +9,7 @@ The project is currently an early, usable port foundation: core UV shell models,
 - Dockable `workspaceControl` UI for Maya 2022-2024.
 - PySide2 panel with Main, Align, Arrange, Symmetry, Select, Utility, and Options tabs.
 - Maya-native UV shell and UV component models.
-- Working first-pass tools for unfold/project, normalize, align, mirror, rotate, distribute, sort, relax, circle, stack, shuffle, selection helpers, checker maps, and UV mesh preview scaffolding.
+- Working first-pass tools for unfold/project, normalize, align, mirror, rotate, distribute, sort, relax, circle, stack, shuffle, merge, stitch, texel density get/set, selection helpers, checker maps, and UV mesh preview scaffolding.
 - Bundled Mio3 icon set and checker map textures.
 - Settings persisted through Maya option variables.
 
@@ -81,7 +81,8 @@ Implemented:
 - Dockable Maya UI shell.
 - Maya UV object, island, and node data foundation.
 - Normalize, align, mirror, rotate, distribute, and 3D-position sort.
-- Relax, circle, stack, and shuffle.
+- Relax, circle, stack, shuffle, merge, and stitch.
+- Texel density estimate and selected-shell scale-to-density.
 - Basic selection and checker map utilities.
 - UV mesh preview scaffold.
 

@@ -3,7 +3,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from mio3_uv_maya.core.mathutils import Bounds2D, Vec2, polygon_area
+from mio3_uv_maya.core.mathutils import Bounds2D, Vec2, Vec3, polygon_area
 from mio3_uv_maya.core.mesh import FaceRecord, MayaUVIsland, MayaUVIslandManager, MayaUVObject
 from mio3_uv_maya.operators.base import Action
 from mio3_uv_maya.operators.align import (
@@ -13,8 +13,10 @@ from mio3_uv_maya.operators.align import (
     _has_edge_align_selection,
     _has_node_component_selection,
 )
+from mio3_uv_maya.operators.texel import _density_from_areas, _scale_islands_to_density
 from mio3_uv_maya.operators import all_actions
 import mio3_uv_maya.core.undo as undo_module
+import mio3_uv_maya.operators.arrange as arrange_module
 import mio3_uv_maya.operators.base as base_module
 
 
@@ -64,6 +66,22 @@ class FakeMeshFn:
         self.update_count += 1
 
 
+class FakeNativeCmds:
+    def __init__(self, selection=None):
+        self.selection = selection or []
+        self.calls = []
+
+    def ls(self, **kwargs):
+        self.calls.append(("ls", dict(kwargs)))
+        return list(self.selection)
+
+    def polyMergeUV(self, **kwargs):
+        self.calls.append(("polyMergeUV", dict(kwargs)))
+
+    def polyMapSewMove(self, **kwargs):
+        self.calls.append(("polyMapSewMove", dict(kwargs)))
+
+
 class TestMio3UVMayaCore(unittest.TestCase):
     def test_vec2_rotation(self):
         rotated = Vec2(1.0, 0.0).rotated(math.pi / 2.0)
@@ -87,6 +105,8 @@ class TestMio3UVMayaCore(unittest.TestCase):
         self.assertTrue(any(action.id == "checker_map" for action in actions))
         self.assertTrue(any(action.id == "align_edges_x" for action in actions))
         self.assertTrue(any(action.id == "align_edges_y" for action in actions))
+        self.assertEqual(next(action for action in actions if action.id == "merge").tooltip, "Merge selected UVs within a small distance.")
+        self.assertEqual(next(action for action in actions if action.id == "texel_density_set").tooltip, "Scale selected UV shells to the stored texel density.")
 
     def test_single_face_is_one_uv_shell(self):
         obj = MayaUVObject.__new__(MayaUVObject)
@@ -213,6 +233,62 @@ class TestMio3UVMayaCore(unittest.TestCase):
                 ("undoInfo", {"stateWithoutFlush": True}),
             ],
         )
+
+    def test_merge_uses_maya_native_poly_merge_uv(self):
+        fake_cmds = FakeNativeCmds(["meshShape.map[0]", "meshShape.map[1]"])
+        with patch.object(arrange_module, "cmds", return_value=fake_cmds):
+            self.assertTrue(arrange_module.merge(0.0025))
+
+        self.assertEqual(
+            fake_cmds.calls,
+            [
+                ("ls", {"sl": True, "fl": True}),
+                ("polyMergeUV", {"distance": 0.0025, "constructionHistory": False}),
+            ],
+        )
+
+    def test_stitch_uses_maya_native_poly_map_sew_move(self):
+        fake_cmds = FakeNativeCmds(["meshShape.e[4]"])
+        with patch.object(arrange_module, "cmds", return_value=fake_cmds):
+            self.assertTrue(arrange_module.stitch())
+
+        self.assertEqual(
+            fake_cmds.calls,
+            [
+                ("ls", {"sl": True, "fl": True}),
+                ("polyMapSewMove", {"constructionHistory": False}),
+            ],
+        )
+
+    def test_texel_density_formula_uses_texture_area(self):
+        self.assertAlmostEqual(_density_from_areas(1.0, 0.25, 1024.0, 2048.0), math.sqrt(0.25 * 1024.0 * 2048.0))
+
+    def test_texel_density_set_scales_shell_around_center(self):
+        obj = FakeUVObject(
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(0.5, 0.0),
+                2: Vec2(0.5, 0.5),
+                3: Vec2(0.0, 0.5),
+            },
+            faces=[FaceRecord(0, [0, 1, 2, 3], [0, 1, 2, 3])],
+        )
+        obj.uv_to_faces = {0: {0}, 1: {0}, 2: {0}, 3: {0}}
+        obj.vertex_positions = {
+            0: Vec3(0.0, 0.0, 0.0),
+            1: Vec3(1.0, 0.0, 0.0),
+            2: Vec3(1.0, 1.0, 0.0),
+            3: Vec3(0.0, 1.0, 0.0),
+        }
+
+        changed = _scale_islands_to_density([MayaUVIsland(obj, {0, 1, 2, 3})], 1024.0, 1024.0, 1024.0)
+
+        self.assertEqual(changed, 1)
+        self.assertEqual(obj.write_count, 1)
+        self.assertEqual(obj.uv_positions[0], Vec2(-0.25, -0.25))
+        self.assertEqual(obj.uv_positions[1], Vec2(0.75, -0.25))
+        self.assertEqual(obj.uv_positions[2], Vec2(0.75, 0.75))
+        self.assertEqual(obj.uv_positions[3], Vec2(-0.25, 0.75))
 
 
 if __name__ == "__main__":

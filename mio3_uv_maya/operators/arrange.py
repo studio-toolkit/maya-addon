@@ -6,6 +6,7 @@ import math
 import random
 
 from .base import Action, warn
+from ..core.maya_api import cmds
 from ..core.mathutils import Vec2
 from ..core.mesh import MayaUVIslandManager
 
@@ -99,6 +100,40 @@ def relax(iterations: int = 10, strength: float = 0.25):
     return True
 
 
+def _run_native_uv_command(label: str, command_name: str, selection_message: str, **kwargs) -> bool:
+    maya_cmds = cmds()
+    selection = maya_cmds.ls(sl=True, fl=True) or []
+    if not selection:
+        warn(selection_message)
+        return False
+
+    try:
+        getattr(maya_cmds, command_name)(**kwargs)
+    except Exception as exc:
+        warn("{} failed: {}".format(label, exc))
+        return False
+    return True
+
+
+def merge(threshold: float = 0.0001):
+    return _run_native_uv_command(
+        "Merge",
+        "polyMergeUV",
+        "Select UVs to merge.",
+        distance=float(threshold),
+        constructionHistory=False,
+    )
+
+
+def stitch():
+    return _run_native_uv_command(
+        "Stitch",
+        "polyMapSewMove",
+        "Select UV seam edges to stitch.",
+        constructionHistory=False,
+    )
+
+
 def not_ready(name: str):
     warn("{} is scaffolded for the parity phase and is not implemented yet.".format(name))
     return False
@@ -109,12 +144,11 @@ ACTIONS = [
     Action("circle", "Circle", "Shape selected UVs into a circle.", circle, "circle"),
     Action("stack", "Stack", "Stack selected UV shells.", stack, "stack"),
     Action("shuffle", "Shuffle", "Shuffle selected shell positions.", shuffle, "shuffle"),
-    Action("merge", "Merge", "Parity placeholder.", lambda: not_ready("Merge"), "merge"),
+    Action("merge", "Merge", "Merge selected UVs within a small distance.", merge, "merge"),
     Action("offset", "Offset", "Parity placeholder.", lambda: not_ready("Offset"), "offset"),
     Action("align_seam", "Align Seam", "Parity placeholder.", lambda: not_ready("Align Seam"), "align_seam_y"),
     Action("stretch", "Stretch", "Parity placeholder.", lambda: not_ready("Stretch"), "stretch"),
-    Action("stitch", "Stitch", "Parity placeholder.", lambda: not_ready("Stitch"), "stitch"),
+    Action("stitch", "Stitch", "Sew and move selected UV seam edges.", stitch, "stitch"),
     Action("unfoldify", "Unfoldify", "Parity placeholder.", lambda: not_ready("Unfoldify"), "map"),
     Action("body_parts", "Body Parts", "Parity placeholder.", lambda: not_ready("Body Parts"), "body"),
 ]
-
