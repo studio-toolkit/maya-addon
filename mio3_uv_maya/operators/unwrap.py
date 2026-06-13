@@ -57,6 +57,7 @@ def gridify():
         manager.islands,
         ratio_influence=settings.gridify_ratio_influence,
         shape_blend=settings.gridify_shape_blend,
+        selected_face_ids_by_shape=getattr(manager, "selected_face_ids_by_shape", {}),
     )
     if result.quad_islands <= 0:
         warn("Gridify needs at least one quad UV island.")

@@ -29,6 +29,9 @@ class FakeUVObject:
     def __init__(self, positions, faces=None):
         self.uv_positions = dict(positions)
         self.faces = faces or []
+        self.vertex_positions = {}
+        self.uv_to_faces = defaultdict(set)
+        self.edge_to_faces = defaultdict(list)
         self.write_count = 0
 
     def set_uv_positions(self, updates):
@@ -97,12 +100,25 @@ class FakeNativeCmds:
         self.calls.append(("polyMapSewMove", tuple(args), dict(kwargs)))
 
 
+def rebuild_fake_topology(obj):
+    obj.uv_to_faces = defaultdict(set)
+    obj.edge_to_faces = defaultdict(list)
+    for face in obj.faces:
+        for uv_id in face.uv_ids:
+            obj.uv_to_faces[uv_id].add(face.face_id)
+        if len(face.vertex_ids) != len(face.uv_ids):
+            continue
+        for local_index, vertex_id in enumerate(face.vertex_ids):
+            next_index = (local_index + 1) % len(face.vertex_ids)
+            edge = tuple(sorted((vertex_id, face.vertex_ids[next_index])))
+            obj.edge_to_faces[edge].append((face.face_id, local_index, next_index))
+    return obj
+
+
 def build_grid_object(columns, rows, uv_positions=None, vertex_positions=None):
     obj = FakeUVObject({})
     obj.vertex_positions = {}
     obj.faces = []
-    obj.uv_to_faces = defaultdict(set)
-    obj.edge_to_faces = defaultdict(list)
 
     for row in range(rows + 1):
         for column in range(columns + 1):
@@ -120,12 +136,7 @@ def build_grid_object(columns, rows, uv_positions=None, vertex_positions=None):
             tr = tl + 1
             face = FaceRecord(face_id, [bl, br, tr, tl], [bl, br, tr, tl])
             obj.faces.append(face)
-            for uv_id in face.uv_ids:
-                obj.uv_to_faces[uv_id].add(face.face_id)
-            for local_index, vertex_id in enumerate(face.vertex_ids):
-                next_index = (local_index + 1) % 4
-                edge = tuple(sorted((vertex_id, face.vertex_ids[next_index])))
-                obj.edge_to_faces[edge].append((face.face_id, local_index, next_index))
+    rebuild_fake_topology(obj)
     return obj
 
 
@@ -425,6 +436,152 @@ class TestMio3UVMayaCore(unittest.TestCase):
 
         assert_grid_lines(self, obj, 2, 2)
 
+    def test_gridify_three_by_two_patch_propagates_grid(self):
+        uv_positions = {}
+        for row in range(3):
+            for column in range(4):
+                uv_id = row * 4 + column
+                uv_positions[uv_id] = Vec2(column + math.sin(row + column) * 0.12, row + column * 0.07)
+        obj = build_grid_object(3, 2, uv_positions)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(gridify_island(island, ratio_influence=0.0, shape_blend=1.0), "changed")
+
+        assert_grid_lines(self, obj, 3, 2)
+
+    def test_gridify_l_shaped_face_subset_stays_inside_patch(self):
+        uv_positions = {}
+        for row in range(3):
+            for column in range(3):
+                uv_id = row * 3 + column
+                uv_positions[uv_id] = Vec2(column + row * 0.16, row + column * 0.11)
+        obj = build_grid_object(2, 2, uv_positions)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+        untouched_corner = obj.uv_positions[8]
+
+        self.assertEqual(gridify_island(island, ratio_influence=0.0, shape_blend=1.0, selected_face_ids={0, 1, 2}), "changed")
+
+        self.assertEqual(obj.uv_positions[8], untouched_corner)
+        for row_ids in ([0, 1, 2], [3, 4, 5], [6, 7]):
+            row_y = obj.uv_positions[row_ids[0]].y
+            for uv_id in row_ids[1:]:
+                self.assertAlmostEqual(obj.uv_positions[uv_id].y, row_y, places=6)
+        for column_ids in ([0, 3, 6], [1, 4, 7], [2, 5]):
+            column_x = obj.uv_positions[column_ids[0]].x
+            for uv_id in column_ids[1:]:
+                self.assertAlmostEqual(obj.uv_positions[uv_id].x, column_x, places=6)
+
+    def test_gridify_uv_split_boundary_does_not_propagate_across_cut(self):
+        obj = FakeUVObject(
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(1.2, 0.2),
+                2: Vec2(-0.1, 1.0),
+                3: Vec2(1.1, 1.15),
+                4: Vec2(2.0, 0.0),
+                5: Vec2(3.0, 0.0),
+                6: Vec2(2.0, 1.0),
+                7: Vec2(3.0, 1.0),
+            },
+            faces=[
+                FaceRecord(0, [0, 1, 3, 2], [0, 1, 3, 2]),
+                FaceRecord(1, [1, 4, 5, 3], [4, 5, 7, 6]),
+            ],
+        )
+        obj.vertex_positions = {
+            0: Vec3(0.0, 0.0, 0.0),
+            1: Vec3(1.0, 0.0, 0.0),
+            2: Vec3(0.0, 1.0, 0.0),
+            3: Vec3(1.0, 1.0, 0.0),
+            4: Vec3(2.0, 0.0, 0.0),
+            5: Vec3(2.0, 1.0, 0.0),
+        }
+        rebuild_fake_topology(obj)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+        right_shell_before = {uv_id: obj.uv_positions[uv_id] for uv_id in (4, 5, 6, 7)}
+
+        self.assertEqual(gridify_island(island, ratio_influence=0.0, shape_blend=1.0, selected_face_ids={0, 1}), "changed")
+
+        self.assertEqual({uv_id: obj.uv_positions[uv_id] for uv_id in (4, 5, 6, 7)}, right_shell_before)
+
+    def test_gridify_explicit_face_selection_does_not_process_whole_shell(self):
+        uv_positions = {}
+        for row in range(3):
+            for column in range(3):
+                uv_id = row * 3 + column
+                uv_positions[uv_id] = Vec2(column + row * 0.15, row + column * 0.09)
+        obj = build_grid_object(2, 2, uv_positions)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+        untouched = {uv_id: obj.uv_positions[uv_id] for uv_id in (2, 5, 6, 7, 8)}
+
+        self.assertEqual(gridify_island(island, ratio_influence=0.0, shape_blend=1.0, selected_face_ids={0}), "changed")
+
+        self.assertEqual({uv_id: obj.uv_positions[uv_id] for uv_id in untouched}, untouched)
+
+    def test_gridify_reversed_neighbor_loop_order_is_matched(self):
+        uv_positions = {
+            0: Vec2(0.0, 0.0),
+            1: Vec2(0.9, 0.1),
+            2: Vec2(1.9, 0.35),
+            3: Vec2(0.0, 1.0),
+            4: Vec2(0.95, 1.05),
+            5: Vec2(1.8, 1.25),
+        }
+        obj = FakeUVObject(
+            uv_positions,
+            faces=[
+                FaceRecord(0, [0, 1, 4, 3], [0, 1, 4, 3]),
+                FaceRecord(1, [2, 5, 4, 1], [2, 5, 4, 1]),
+            ],
+        )
+        obj.vertex_positions = {
+            0: Vec3(0.0, 0.0, 0.0),
+            1: Vec3(1.0, 0.0, 0.0),
+            2: Vec3(2.0, 0.0, 0.0),
+            3: Vec3(0.0, 1.0, 0.0),
+            4: Vec3(1.0, 1.0, 0.0),
+            5: Vec3(2.0, 1.0, 0.0),
+        }
+        rebuild_fake_topology(obj)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(gridify_island(island, ratio_influence=0.0, shape_blend=1.0), "changed")
+
+        assert_grid_lines(self, obj, 2, 1)
+
+    def test_gridify_syncs_matching_unselected_uv_copies(self):
+        obj = FakeUVObject(
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(1.2, 0.2),
+                2: Vec2(-0.1, 1.0),
+                3: Vec2(1.1, 1.15),
+                4: Vec2(1.2, 0.2),
+                5: Vec2(1.1, 1.15),
+                6: Vec2(2.0, 0.0),
+                7: Vec2(2.0, 1.0),
+            },
+            faces=[
+                FaceRecord(0, [0, 1, 3, 2], [0, 1, 3, 2]),
+                FaceRecord(1, [1, 4, 5, 3], [4, 6, 7, 5]),
+            ],
+        )
+        obj.vertex_positions = {
+            0: Vec3(0.0, 0.0, 0.0),
+            1: Vec3(1.0, 0.0, 0.0),
+            2: Vec3(0.0, 1.0, 0.0),
+            3: Vec3(1.0, 1.0, 0.0),
+            4: Vec3(2.0, 0.0, 0.0),
+            5: Vec3(2.0, 1.0, 0.0),
+        }
+        rebuild_fake_topology(obj)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(gridify_island(island, ratio_influence=0.0, shape_blend=1.0, selected_face_ids={0}), "changed")
+
+        self.assertEqual(obj.uv_positions[4], obj.uv_positions[1])
+        self.assertEqual(obj.uv_positions[5], obj.uv_positions[3])
+
     def test_gridify_geometry_ratio_can_force_square_aspect(self):
         obj = build_grid_object(
             1,
@@ -493,15 +650,16 @@ class TestMio3UVMayaCore(unittest.TestCase):
             gridify_keep_aspect=True,
         )
         result = SimpleNamespace(quad_islands=1, changed_islands=1, already_rectangular=0)
-        manager = SimpleNamespace(islands=[object()])
+        manager = SimpleNamespace(islands=[object()], selected_face_ids_by_shape={"meshShape": {0, 1}})
 
         with patch.object(unwrap_module.Settings, "load", return_value=settings), patch.object(
             unwrap_module.MayaUVIslandManager, "from_selection", return_value=manager
-        ), patch.object(unwrap_module, "gridify_islands", return_value=result), patch.object(
+        ), patch.object(unwrap_module, "gridify_islands", return_value=result) as gridify_mock, patch.object(
             unwrap_module.align, "normalize", return_value=True
         ) as normalize:
             self.assertTrue(unwrap_module.gridify())
 
+        self.assertEqual(gridify_mock.call_args.kwargs["selected_face_ids_by_shape"], {"meshShape": {0, 1}})
         normalize.assert_called_once_with(keep_aspect=True)
 
 

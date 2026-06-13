@@ -276,6 +276,7 @@ class MayaUVIsland:
 class MayaUVIslandManager:
     objects: list[MayaUVObject]
     selected_uvs_by_shape: dict[str, set[int]] = field(default_factory=dict)
+    selected_face_ids_by_shape: dict[str, set[int]] = field(default_factory=dict)
     selection_kinds_by_shape: dict[str, set[str]] = field(default_factory=dict)
     islands: list[MayaUVIsland] = field(default_factory=list)
 
@@ -284,6 +285,7 @@ class MayaUVIslandManager:
         selection = current_selection()
         objects = [MayaUVObject(shape) for shape in mesh_shapes_from_selection(selection)]
         selected_by_shape = {}
+        selected_faces_by_shape = {}
         kinds_by_shape = {}
         for obj in objects:
             aliases = obj.component_aliases()
@@ -312,11 +314,24 @@ class MayaUVIslandManager:
             selected.update(obj.uv_ids_from_faces(face_ids))
             selected.update(obj.uv_ids_from_vertices(vertex_ids))
             selected.update(obj.uv_ids_from_edges(edge_ids))
+
+            selected_face_ids = set(face_ids)
+            if kinds.intersection({"uv", "edge", "vertex"}):
+                for uv_id in selected:
+                    selected_face_ids.update(obj.uv_to_faces.get(uv_id, set()))
             if not selected and include_all_if_no_components:
                 selected = obj.all_uv_ids()
+            if not selected_face_ids and not kinds and include_all_if_no_components:
+                selected_face_ids = {face.face_id for face in obj.faces}
             selected_by_shape[obj.shape] = selected
+            selected_faces_by_shape[obj.shape] = selected_face_ids
             kinds_by_shape[obj.shape] = kinds
-        manager = cls(objects=objects, selected_uvs_by_shape=selected_by_shape, selection_kinds_by_shape=kinds_by_shape)
+        manager = cls(
+            objects=objects,
+            selected_uvs_by_shape=selected_by_shape,
+            selected_face_ids_by_shape=selected_faces_by_shape,
+            selection_kinds_by_shape=kinds_by_shape,
+        )
         manager.find_islands()
         return manager
 
