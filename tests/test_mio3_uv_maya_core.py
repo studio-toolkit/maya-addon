@@ -67,19 +67,31 @@ class FakeMeshFn:
 
 
 class FakeNativeCmds:
-    def __init__(self, selection=None):
+    def __init__(self, selection=None, conversions=None):
         self.selection = selection or []
+        self.conversions = conversions or {}
         self.calls = []
 
-    def ls(self, **kwargs):
-        self.calls.append(("ls", dict(kwargs)))
+    def ls(self, *args, **kwargs):
+        self.calls.append(("ls", tuple(args), dict(kwargs)))
+        if args:
+            return list(args[0])
         return list(self.selection)
 
-    def polyMergeUV(self, **kwargs):
-        self.calls.append(("polyMergeUV", dict(kwargs)))
+    def polyListComponentConversion(self, components, **kwargs):
+        self.calls.append(("polyListComponentConversion", (list(components),), dict(kwargs)))
+        key = tuple(components), tuple(sorted(kwargs.items()))
+        return list(self.conversions.get(key, components))
 
-    def polyMapSewMove(self, **kwargs):
-        self.calls.append(("polyMapSewMove", dict(kwargs)))
+    def select(self, components, **kwargs):
+        self.calls.append(("select", (list(components),), dict(kwargs)))
+        self.selection = list(components)
+
+    def polyMergeUV(self, *args, **kwargs):
+        self.calls.append(("polyMergeUV", tuple(args), dict(kwargs)))
+
+    def polyMapSewMove(self, *args, **kwargs):
+        self.calls.append(("polyMapSewMove", tuple(args), dict(kwargs)))
 
 
 class TestMio3UVMayaCore(unittest.TestCase):
@@ -235,28 +247,44 @@ class TestMio3UVMayaCore(unittest.TestCase):
         )
 
     def test_merge_uses_maya_native_poly_merge_uv(self):
-        fake_cmds = FakeNativeCmds(["meshShape.map[0]", "meshShape.map[1]"])
+        selection = ["meshShape.e[10]", "meshShape.e[11]"]
+        converted = ["meshShape.map[0]", "meshShape.map[1]"]
+        fake_cmds = FakeNativeCmds(
+            selection,
+            conversions={(tuple(selection), (("tuv", True),)): converted},
+        )
         with patch.object(arrange_module, "cmds", return_value=fake_cmds):
             self.assertTrue(arrange_module.merge(0.0025))
 
         self.assertEqual(
             fake_cmds.calls,
             [
-                ("ls", {"sl": True, "fl": True}),
-                ("polyMergeUV", {"distance": 0.0025, "constructionHistory": False}),
+                ("ls", (), {"sl": True, "fl": True}),
+                ("polyListComponentConversion", (selection,), {"tuv": True}),
+                ("ls", (converted,), {"fl": True}),
+                ("select", (converted,), {"r": True}),
+                ("polyMergeUV", (converted,), {"distance": 0.0025, "constructionHistory": False}),
             ],
         )
 
     def test_stitch_uses_maya_native_poly_map_sew_move(self):
-        fake_cmds = FakeNativeCmds(["meshShape.e[4]"])
+        selection = ["meshShape.vtx[370]", "meshShape.vtx[371]"]
+        converted = ["meshShape.e[352]", "meshShape.e[712]"]
+        fake_cmds = FakeNativeCmds(
+            selection,
+            conversions={(tuple(selection), (("te", True),)): converted},
+        )
         with patch.object(arrange_module, "cmds", return_value=fake_cmds):
             self.assertTrue(arrange_module.stitch())
 
         self.assertEqual(
             fake_cmds.calls,
             [
-                ("ls", {"sl": True, "fl": True}),
-                ("polyMapSewMove", {"constructionHistory": False}),
+                ("ls", (), {"sl": True, "fl": True}),
+                ("polyListComponentConversion", (selection,), {"te": True}),
+                ("ls", (converted,), {"fl": True}),
+                ("select", (converted,), {"r": True}),
+                ("polyMapSewMove", (converted,), {"constructionHistory": False}),
             ],
         )
 

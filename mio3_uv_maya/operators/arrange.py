@@ -6,6 +6,7 @@ import math
 import random
 
 from .base import Action, warn
+from ..core.components import parse_component
 from ..core.maya_api import cmds
 from ..core.mathutils import Vec2
 from ..core.mesh import MayaUVIslandManager
@@ -100,15 +101,58 @@ def relax(iterations: int = 10, strength: float = 0.25):
     return True
 
 
-def _run_native_uv_command(label: str, command_name: str, selection_message: str, **kwargs) -> bool:
+def _unique_components(components: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for component in components:
+        if component in seen:
+            continue
+        seen.add(component)
+        result.append(component)
+    return result
+
+
+def _selected_components() -> list[str]:
     maya_cmds = cmds()
     selection = maya_cmds.ls(sl=True, fl=True) or []
-    if not selection:
+    return [item for item in selection if parse_component(item)]
+
+
+def _convert_components(components: list[str], target: str) -> list[str]:
+    if not components:
+        return []
+    maya_cmds = cmds()
+    if target == "uv":
+        converted = maya_cmds.polyListComponentConversion(components, tuv=True) or []
+        fallback_kind = "map"
+    elif target == "edge":
+        converted = maya_cmds.polyListComponentConversion(components, te=True) or []
+        fallback_kind = "e"
+    else:
+        converted = list(components)
+        fallback_kind = ""
+    flattened = maya_cmds.ls(converted, fl=True) or []
+    if not flattened and fallback_kind:
+        flattened = [component for component in components if (parse_component(component) or ("", "", -1))[1] == fallback_kind]
+    return _unique_components(flattened)
+
+
+def _run_native_uv_command(label: str, command_name: str, components: list[str], selection_message: str, **kwargs) -> bool:
+    if not components:
         warn(selection_message)
         return False
 
+    maya_cmds = cmds()
+    command = getattr(maya_cmds, command_name)
     try:
-        getattr(maya_cmds, command_name)(**kwargs)
+        maya_cmds.select(components, r=True)
+        command(components, **kwargs)
+    except TypeError:
+        try:
+            command(**kwargs)
+        except Exception as exc:
+            warn("{} failed: {}".format(label, exc))
+            return False
     except Exception as exc:
         warn("{} failed: {}".format(label, exc))
         return False
@@ -116,20 +160,24 @@ def _run_native_uv_command(label: str, command_name: str, selection_message: str
 
 
 def merge(threshold: float = 0.0001):
+    uv_components = _convert_components(_selected_components(), "uv")
     return _run_native_uv_command(
         "Merge",
         "polyMergeUV",
-        "Select UVs to merge.",
+        uv_components,
+        "Select UVs, vertices, edges, or faces to merge.",
         distance=float(threshold),
         constructionHistory=False,
     )
 
 
 def stitch():
+    edge_components = _convert_components(_selected_components(), "edge")
     return _run_native_uv_command(
         "Stitch",
         "polyMapSewMove",
-        "Select UV seam edges to stitch.",
+        edge_components,
+        "Select UV seam edges, vertices, UVs, or faces to stitch.",
         constructionHistory=False,
     )
 
