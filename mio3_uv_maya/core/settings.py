@@ -54,6 +54,12 @@ class Settings:
     gridify_shape_blend: float = 0.0
     gridify_normalize: bool = False
     gridify_keep_aspect: bool = False
+    rectify_bbox_type: str = "AVERAGE"
+    rectify_distribute: str = "GEOMETRY"
+    rectify_unwrap_method: str = "ANGLE_BASED"
+    rectify_unwrap: bool = True
+    rectify_stretch: bool = False
+    rectify_pin: bool = True
 
     @classmethod
     def load(cls) -> "Settings":
@@ -73,6 +79,12 @@ class Settings:
             gridify_shape_blend=float(get_option("gridifyShapeBlend", 0.0)),
             gridify_normalize=bool(int(get_option("gridifyNormalize", 0))),
             gridify_keep_aspect=bool(int(get_option("gridifyKeepAspect", 0))),
+            rectify_bbox_type=str(get_option("rectifyBBoxType", "AVERAGE")),
+            rectify_distribute=str(get_option("rectifyDistribute", "GEOMETRY")),
+            rectify_unwrap_method=str(get_option("rectifyUnwrapMethod", "ANGLE_BASED")),
+            rectify_unwrap=bool(int(get_option("rectifyUnwrap", 1))),
+            rectify_stretch=bool(int(get_option("rectifyStretch", 0))),
+            rectify_pin=bool(int(get_option("rectifyPin", 1))),
         )
 
     def save(self) -> None:
@@ -80,6 +92,12 @@ class Settings:
             self.checker_map_size = "2048"
         self.gridify_ratio_influence = max(0.0, min(float(self.gridify_ratio_influence), 1.0))
         self.gridify_shape_blend = max(0.0, min(float(self.gridify_shape_blend), 1.0))
+        if self.rectify_bbox_type not in {"AVERAGE", "BBOX"}:
+            self.rectify_bbox_type = "AVERAGE"
+        if self.rectify_distribute not in {"GEOMETRY", "EVEN", "NONE"}:
+            self.rectify_distribute = "GEOMETRY"
+        if self.rectify_unwrap_method not in {"ANGLE_BASED", "CONFORMAL", "MINIMUM_STRETCH"}:
+            self.rectify_unwrap_method = "ANGLE_BASED"
         set_option("alignMode", self.align_mode)
         set_option("udim", self.udim)
         set_option("symmetryUvAxis", self.symmetry_uv_axis)
@@ -95,3 +113,9 @@ class Settings:
         set_option("gridifyShapeBlend", self.gridify_shape_blend)
         set_option("gridifyNormalize", self.gridify_normalize)
         set_option("gridifyKeepAspect", self.gridify_keep_aspect)
+        set_option("rectifyBBoxType", self.rectify_bbox_type)
+        set_option("rectifyDistribute", self.rectify_distribute)
+        set_option("rectifyUnwrapMethod", self.rectify_unwrap_method)
+        set_option("rectifyUnwrap", self.rectify_unwrap)
+        set_option("rectifyStretch", self.rectify_stretch)
+        set_option("rectifyPin", self.rectify_pin)

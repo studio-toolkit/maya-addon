@@ -109,6 +109,51 @@ class Mio3UVPanel(QtWidgets.QWidget):
 
         layout.addRow(gridify_box)
 
+        rectify_box = QtWidgets.QGroupBox("Rectify")
+        rectify_layout = QtWidgets.QFormLayout(rectify_box)
+        rectify_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.rectify_bbox_type = QtWidgets.QComboBox()
+        self.rectify_bbox_type.addItem("Average", "AVERAGE")
+        self.rectify_bbox_type.addItem("Max", "BBOX")
+        self.rectify_bbox_type.setCurrentIndex(max(0, self.rectify_bbox_type.findData(self.settings.rectify_bbox_type)))
+        self.rectify_bbox_type.currentIndexChanged.connect(self._save_rectify_bbox_type)
+        rectify_layout.addRow("Scale", self.rectify_bbox_type)
+
+        self.rectify_distribute = QtWidgets.QComboBox()
+        self.rectify_distribute.addItem("Geometry", "GEOMETRY")
+        self.rectify_distribute.addItem("Even", "EVEN")
+        self.rectify_distribute.addItem("None", "NONE")
+        self.rectify_distribute.setCurrentIndex(max(0, self.rectify_distribute.findData(self.settings.rectify_distribute)))
+        self.rectify_distribute.currentIndexChanged.connect(self._save_rectify_distribute)
+        rectify_layout.addRow("Align UVs", self.rectify_distribute)
+
+        self.rectify_unwrap_method = QtWidgets.QComboBox()
+        self.rectify_unwrap_method.addItem("Angle Based", "ANGLE_BASED")
+        self.rectify_unwrap_method.addItem("Conformal", "CONFORMAL")
+        self.rectify_unwrap_method.addItem("Minimum Stretch", "MINIMUM_STRETCH")
+        self.rectify_unwrap_method.setCurrentIndex(max(0, self.rectify_unwrap_method.findData(self.settings.rectify_unwrap_method)))
+        self.rectify_unwrap_method.currentIndexChanged.connect(self._save_rectify_unwrap_method)
+        rectify_layout.addRow("Unwrap Method", self.rectify_unwrap_method)
+
+        self.rectify_unwrap = QtWidgets.QCheckBox()
+        self.rectify_unwrap.setChecked(bool(self.settings.rectify_unwrap))
+        self.rectify_unwrap.toggled.connect(self._save_rectify_unwrap)
+        rectify_layout.addRow("Unwrap", self.rectify_unwrap)
+
+        self.rectify_stretch = QtWidgets.QCheckBox()
+        self.rectify_stretch.setChecked(bool(self.settings.rectify_stretch))
+        self.rectify_stretch.setEnabled(bool(self.settings.rectify_unwrap))
+        self.rectify_stretch.toggled.connect(self._save_rectify_stretch)
+        rectify_layout.addRow("Stretch", self.rectify_stretch)
+
+        self.rectify_pin = QtWidgets.QCheckBox()
+        self.rectify_pin.setChecked(bool(self.settings.rectify_pin))
+        self.rectify_pin.toggled.connect(self._save_rectify_pin)
+        rectify_layout.addRow("Pinned", self.rectify_pin)
+
+        layout.addRow(rectify_box)
+
         self.symmetry_uv_axis = QtWidgets.QComboBox()
         self.symmetry_uv_axis.addItems(["X", "Y"])
         self.symmetry_uv_axis.setCurrentText(self.settings.symmetry_uv_axis)
@@ -171,6 +216,31 @@ class Mio3UVPanel(QtWidgets.QWidget):
 
     def _save_gridify_keep_aspect(self, value):
         self.settings.gridify_keep_aspect = bool(value)
+        self.settings.save()
+
+    def _save_rectify_bbox_type(self, *_args):
+        self.settings.rectify_bbox_type = self.rectify_bbox_type.currentData()
+        self.settings.save()
+
+    def _save_rectify_distribute(self, *_args):
+        self.settings.rectify_distribute = self.rectify_distribute.currentData()
+        self.settings.save()
+
+    def _save_rectify_unwrap_method(self, *_args):
+        self.settings.rectify_unwrap_method = self.rectify_unwrap_method.currentData()
+        self.settings.save()
+
+    def _save_rectify_unwrap(self, value):
+        self.settings.rectify_unwrap = bool(value)
+        self.rectify_stretch.setEnabled(bool(value))
+        self.settings.save()
+
+    def _save_rectify_stretch(self, value):
+        self.settings.rectify_stretch = bool(value)
+        self.settings.save()
+
+    def _save_rectify_pin(self, value):
+        self.settings.rectify_pin = bool(value)
         self.settings.save()
 
     def _save_symmetry_uv_axis(self, value):

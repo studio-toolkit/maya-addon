@@ -7,6 +7,7 @@ from unittest.mock import patch
 from mio3_uv_maya.core.mathutils import Bounds2D, Vec2, Vec3, polygon_area
 from mio3_uv_maya.core.mesh import FaceRecord, MayaUVIsland, MayaUVIslandManager, MayaUVObject
 from mio3_uv_maya.core.gridify import gridify_island, gridify_islands
+from mio3_uv_maya.core.rectify import RectifyOptions, rectify_island, rectify_islands
 from mio3_uv_maya.operators.base import Action
 from mio3_uv_maya.operators.align import (
     _align_edge_groups,
@@ -180,6 +181,7 @@ class TestMio3UVMayaCore(unittest.TestCase):
         self.assertEqual(next(action for action in actions if action.id == "merge").tooltip, "Merge selected UVs within a small distance.")
         self.assertEqual(next(action for action in actions if action.id == "texel_density_set").tooltip, "Scale selected UV shells to the stored texel density.")
         self.assertEqual(next(action for action in actions if action.id == "gridify").tooltip, "Align selected quad UV shells into a grid.")
+        self.assertEqual(next(action for action in actions if action.id == "rectify").tooltip, "Unwrap selected UV boundaries into a rectangle.")
 
     def test_single_face_is_one_uv_shell(self):
         obj = MayaUVObject.__new__(MayaUVObject)
@@ -378,6 +380,206 @@ class TestMio3UVMayaCore(unittest.TestCase):
         self.assertEqual(obj.uv_positions[1], Vec2(0.75, -0.25))
         self.assertEqual(obj.uv_positions[2], Vec2(0.75, 0.75))
         self.assertEqual(obj.uv_positions[3], Vec2(-0.25, 0.75))
+
+    def test_rectify_distorted_quad_becomes_bbox_rectangle(self):
+        obj = build_grid_object(
+            1,
+            1,
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(1.2, 0.2),
+                2: Vec2(-0.1, 1.0),
+                3: Vec2(1.1, 1.15),
+            },
+        )
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+        options = RectifyOptions(bbox_type="BBOX", distribute="EVEN", unwrap=False)
+
+        self.assertEqual(rectify_island(island, {0, 1, 2, 3}, options), "changed")
+
+        self.assertAlmostEqual(obj.uv_positions[0].y, obj.uv_positions[1].y, places=6)
+        self.assertAlmostEqual(obj.uv_positions[2].y, obj.uv_positions[3].y, places=6)
+        self.assertAlmostEqual(obj.uv_positions[0].x, obj.uv_positions[2].x, places=6)
+        self.assertAlmostEqual(obj.uv_positions[1].x, obj.uv_positions[3].x, places=6)
+        self.assertEqual(obj.write_count, 1)
+
+    def test_rectify_two_by_two_boundary_paths_are_straight(self):
+        uv_positions = {}
+        for row in range(3):
+            for column in range(3):
+                uv_id = row * 3 + column
+                uv_positions[uv_id] = Vec2(column + row * 0.18, row + column * 0.12)
+        obj = build_grid_object(2, 2, uv_positions)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+        interior_before = obj.uv_positions[4]
+        options = RectifyOptions(bbox_type="BBOX", distribute="EVEN", unwrap=False)
+
+        self.assertEqual(rectify_island(island, {0, 2, 6, 8}, options), "changed")
+
+        for row_ids in ([0, 1, 2], [6, 7, 8]):
+            row_y = obj.uv_positions[row_ids[0]].y
+            for uv_id in row_ids[1:]:
+                self.assertAlmostEqual(obj.uv_positions[uv_id].y, row_y, places=6)
+        for column_ids in ([0, 3, 6], [2, 5, 8]):
+            column_x = obj.uv_positions[column_ids[0]].x
+            for uv_id in column_ids[1:]:
+                self.assertAlmostEqual(obj.uv_positions[uv_id].x, column_x, places=6)
+        self.assertEqual(obj.uv_positions[4], interior_before)
+
+    def test_rectify_three_by_two_boundary_paths_are_straight(self):
+        uv_positions = {}
+        for row in range(3):
+            for column in range(4):
+                uv_id = row * 4 + column
+                uv_positions[uv_id] = Vec2(column + math.sin(row + column) * 0.11, row + column * 0.09)
+        obj = build_grid_object(3, 2, uv_positions)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+        options = RectifyOptions(bbox_type="BBOX", distribute="EVEN", unwrap=False)
+
+        self.assertEqual(rectify_island(island, {0, 3, 8, 11}, options), "changed")
+
+        for row_ids in ([0, 1, 2, 3], [8, 9, 10, 11]):
+            row_y = obj.uv_positions[row_ids[0]].y
+            for uv_id in row_ids[1:]:
+                self.assertAlmostEqual(obj.uv_positions[uv_id].y, row_y, places=6)
+        for column_ids in ([0, 4, 8], [3, 7, 11]):
+            column_x = obj.uv_positions[column_ids[0]].x
+            for uv_id in column_ids[1:]:
+                self.assertAlmostEqual(obj.uv_positions[uv_id].x, column_x, places=6)
+
+    def test_rectify_distribute_modes_change_boundary_spacing(self):
+        vertex_positions = {
+            0: Vec3(0.0, 0.0, 0.0),
+            1: Vec3(1.0, 0.0, 0.0),
+            2: Vec3(3.0, 0.0, 0.0),
+            3: Vec3(0.0, 1.0, 0.0),
+            4: Vec3(1.0, 1.0, 0.0),
+            5: Vec3(3.0, 1.0, 0.0),
+        }
+        uv_positions = {
+            0: Vec2(0.0, 0.0),
+            1: Vec2(0.7, 0.15),
+            2: Vec2(2.0, 0.0),
+            3: Vec2(0.0, 1.0),
+            4: Vec2(0.7, 1.15),
+            5: Vec2(2.0, 1.0),
+        }
+        even_obj = build_grid_object(2, 1, uv_positions, vertex_positions)
+        geo_obj = build_grid_object(2, 1, uv_positions, vertex_positions)
+        none_obj = build_grid_object(2, 1, uv_positions, vertex_positions)
+        selected = {0, 2, 3, 5}
+
+        self.assertEqual(rectify_island(MayaUVIsland(even_obj, set(even_obj.uv_positions)), selected, RectifyOptions("BBOX", "EVEN", unwrap=False)), "changed")
+        self.assertEqual(rectify_island(MayaUVIsland(geo_obj, set(geo_obj.uv_positions)), selected, RectifyOptions("BBOX", "GEOMETRY", unwrap=False)), "changed")
+        self.assertEqual(rectify_island(MayaUVIsland(none_obj, set(none_obj.uv_positions)), selected, RectifyOptions("BBOX", "NONE", unwrap=False)), "changed")
+
+        even_top_mid = even_obj.uv_positions[4].x - even_obj.uv_positions[3].x
+        geo_top_mid = geo_obj.uv_positions[4].x - geo_obj.uv_positions[3].x
+        none_top_mid = none_obj.uv_positions[4].x - none_obj.uv_positions[3].x
+        self.assertLess(geo_top_mid, even_top_mid)
+        self.assertLess(geo_top_mid, none_top_mid)
+        self.assertLess(none_top_mid, even_top_mid)
+
+    def test_rectify_average_bbox_remaps_boundary(self):
+        obj = build_grid_object(
+            1,
+            1,
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(4.0, 0.0),
+                2: Vec2(0.0, 3.0),
+                3: Vec2(4.0, 1.0),
+            },
+        )
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(rectify_island(island, {0, 1, 2, 3}, RectifyOptions(bbox_type="AVERAGE", distribute="EVEN", unwrap=False)), "changed")
+
+        self.assertAlmostEqual(obj.uv_positions[2].y, 2.0, places=6)
+        self.assertAlmostEqual(obj.uv_positions[3].y, 2.0, places=6)
+        self.assertAlmostEqual(obj.uv_positions[0].y, 0.0, places=6)
+        self.assertAlmostEqual(obj.uv_positions[1].y, 0.0, places=6)
+
+    def test_rectify_unwrap_relaxes_interior_without_moving_boundary(self):
+        uv_positions = {}
+        for row in range(3):
+            for column in range(3):
+                uv_id = row * 3 + column
+                uv_positions[uv_id] = Vec2(column + row * 0.12, row + column * 0.08)
+        uv_positions[4] = Vec2(5.0, 5.0)
+        obj = build_grid_object(2, 2, uv_positions)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(rectify_island(island, {0, 2, 6, 8}, RectifyOptions(bbox_type="BBOX", distribute="EVEN", unwrap=True)), "changed")
+
+        min_x = min(obj.uv_positions[uv_id].x for uv_id in (0, 2, 6, 8))
+        max_x = max(obj.uv_positions[uv_id].x for uv_id in (0, 2, 6, 8))
+        min_y = min(obj.uv_positions[uv_id].y for uv_id in (0, 2, 6, 8))
+        max_y = max(obj.uv_positions[uv_id].y for uv_id in (0, 2, 6, 8))
+        self.assertGreaterEqual(obj.uv_positions[4].x, min_x)
+        self.assertLessEqual(obj.uv_positions[4].x, max_x)
+        self.assertGreaterEqual(obj.uv_positions[4].y, min_y)
+        self.assertLessEqual(obj.uv_positions[4].y, max_y)
+        for row_ids in ([0, 1, 2], [6, 7, 8]):
+            row_y = obj.uv_positions[row_ids[0]].y
+            for uv_id in row_ids[1:]:
+                self.assertAlmostEqual(obj.uv_positions[uv_id].y, row_y, places=6)
+
+    def test_rectify_skips_when_less_than_four_reference_uvs(self):
+        obj = build_grid_object(1, 1)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+
+        self.assertEqual(rectify_island(island, {0, 1, 2}, RectifyOptions()), "skipped")
+        self.assertEqual(obj.write_count, 0)
+
+    def test_rectify_multi_island_only_processes_valid_reference_islands(self):
+        obj_a = build_grid_object(1, 1)
+        obj_b = build_grid_object(1, 1, {0: Vec2(10.0, 10.0), 1: Vec2(11.0, 10.0), 2: Vec2(10.0, 11.0), 3: Vec2(11.0, 11.0)})
+        obj_b.shape = "meshShapeB"
+
+        result = rectify_islands(
+            [MayaUVIsland(obj_a, set(obj_a.uv_positions)), MayaUVIsland(obj_b, set(obj_b.uv_positions))],
+            {"meshShape": {0, 1, 2, 3}},
+            RectifyOptions(bbox_type="BBOX", unwrap=False),
+        )
+
+        self.assertEqual(result.valid_islands, 1)
+        self.assertEqual(result.skipped_islands, 1)
+        self.assertEqual(obj_a.write_count, 0)
+        self.assertEqual(obj_b.write_count, 0)
+
+    def test_rectify_uv_split_boundary_does_not_move_other_shell(self):
+        obj = FakeUVObject(
+            {
+                0: Vec2(0.0, 0.0),
+                1: Vec2(1.2, 0.2),
+                2: Vec2(-0.1, 1.0),
+                3: Vec2(1.1, 1.15),
+                4: Vec2(2.0, 0.0),
+                5: Vec2(3.0, 0.0),
+                6: Vec2(2.0, 1.0),
+                7: Vec2(3.0, 1.0),
+            },
+            faces=[
+                FaceRecord(0, [0, 1, 3, 2], [0, 1, 3, 2]),
+                FaceRecord(1, [1, 4, 5, 3], [4, 5, 7, 6]),
+            ],
+        )
+        obj.vertex_positions = {
+            0: Vec3(0.0, 0.0, 0.0),
+            1: Vec3(1.0, 0.0, 0.0),
+            2: Vec3(0.0, 1.0, 0.0),
+            3: Vec3(1.0, 1.0, 0.0),
+            4: Vec3(2.0, 0.0, 0.0),
+            5: Vec3(2.0, 1.0, 0.0),
+        }
+        rebuild_fake_topology(obj)
+        island = MayaUVIsland(obj, set(obj.uv_positions))
+        other_shell_before = {uv_id: obj.uv_positions[uv_id] for uv_id in (4, 5, 6, 7)}
+
+        self.assertEqual(rectify_island(island, {0, 1, 2, 3}, RectifyOptions(bbox_type="BBOX", unwrap=False)), "changed")
+
+        self.assertEqual({uv_id: obj.uv_positions[uv_id] for uv_id in (4, 5, 6, 7)}, other_shell_before)
 
     def test_gridify_single_distorted_quad_becomes_rectangle(self):
         obj = build_grid_object(
@@ -661,6 +863,33 @@ class TestMio3UVMayaCore(unittest.TestCase):
 
         self.assertEqual(gridify_mock.call_args.kwargs["selected_face_ids_by_shape"], {"meshShape": {0, 1}})
         normalize.assert_called_once_with(keep_aspect=True)
+
+    def test_rectify_operator_passes_settings_to_core(self):
+        settings = SimpleNamespace(
+            rectify_bbox_type="BBOX",
+            rectify_distribute="EVEN",
+            rectify_unwrap_method="CONFORMAL",
+            rectify_unwrap=False,
+            rectify_stretch=True,
+            rectify_pin=False,
+        )
+        result = SimpleNamespace(valid_islands=1, changed_islands=1, skipped_islands=0)
+        manager = SimpleNamespace(islands=[object()], selected_uvs_by_shape={"meshShape": {0, 1, 2, 3}})
+
+        with patch.object(unwrap_module.Settings, "load", return_value=settings), patch.object(
+            unwrap_module.MayaUVIslandManager, "from_selection", return_value=manager
+        ) as manager_mock, patch.object(unwrap_module, "rectify_islands", return_value=result) as rectify_mock:
+            self.assertTrue(unwrap_module.rectify())
+
+        manager_mock.assert_called_once_with(include_all_if_no_components=False)
+        options = rectify_mock.call_args.args[2]
+        self.assertEqual(rectify_mock.call_args.args[1], {"meshShape": {0, 1, 2, 3}})
+        self.assertEqual(options.bbox_type, "BBOX")
+        self.assertEqual(options.distribute, "EVEN")
+        self.assertEqual(options.unwrap_method, "CONFORMAL")
+        self.assertFalse(options.unwrap)
+        self.assertTrue(options.stretch)
+        self.assertFalse(options.pin)
 
 
 if __name__ == "__main__":

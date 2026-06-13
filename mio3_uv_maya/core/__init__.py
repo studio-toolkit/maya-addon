@@ -2,6 +2,7 @@
 
 from .mathutils import Vec2, Vec3, Bounds2D
 from .mesh import MayaUVObject, MayaUVIsland, MayaUVIslandManager
+from .rectify import RectifyOptions, RectifyResult
 from .uv_nodes import MayaUVNode, MayaUVNodeGroup, MayaUVNodeManager
 
 __all__ = [
@@ -12,7 +13,8 @@ __all__ = [
     "MayaUVNodeGroup",
     "MayaUVNodeManager",
     "MayaUVObject",
+    "RectifyOptions",
+    "RectifyResult",
     "Vec2",
     "Vec3",
 ]
-

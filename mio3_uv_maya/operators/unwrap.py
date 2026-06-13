@@ -12,6 +12,7 @@ from .base import Action, warn
 from ..core.gridify import gridify_islands
 from ..core.maya_api import cmds
 from ..core.mesh import MayaUVIslandManager
+from ..core.rectify import RectifyOptions, rectify_islands
 from ..core.settings import Settings
 
 
@@ -73,6 +74,30 @@ def gridify():
     return True
 
 
+def rectify():
+    manager = MayaUVIslandManager.from_selection(include_all_if_no_components=False)
+    if not manager.islands:
+        warn("Select at least four UVs on a UV island first.")
+        return False
+
+    settings = Settings.load()
+    options = RectifyOptions(
+        bbox_type=settings.rectify_bbox_type,
+        distribute=settings.rectify_distribute,
+        unwrap_method=settings.rectify_unwrap_method,
+        unwrap=settings.rectify_unwrap,
+        stretch=settings.rectify_stretch,
+        pin=settings.rectify_pin,
+    )
+    result = rectify_islands(manager.islands, getattr(manager, "selected_uvs_by_shape", {}), options)
+    if result.valid_islands <= 0:
+        warn("Rectify needs at least four selected UV reference points.")
+        return False
+    if result.changed_islands <= 0:
+        warn("Rectify did not change the current selection.")
+    return True
+
+
 def not_ready(name: str):
     warn("{} is scaffolded for the parity phase and is not implemented yet.".format(name))
     return False
@@ -83,6 +108,6 @@ ACTIONS = [
     Action("unwrap_project", "Project", "Planar project selected faces.", projection_unwrap, "camera"),
     Action("straight", "Straight", "Parity placeholder.", lambda: not_ready("Straight"), "straight"),
     Action("gridify", "Gridify", "Align selected quad UV shells into a grid.", gridify, "grid"),
-    Action("rectify", "Rectify", "Parity placeholder.", lambda: not_ready("Rectify"), "rectify"),
+    Action("rectify", "Rectify", "Unwrap selected UV boundaries into a rectangle.", rectify, "rectify"),
     Action("virtual_mirror", "Virtual Mirror", "Parity placeholder.", lambda: not_ready("Virtual Mirror"), "mirror_uv"),
 ]
