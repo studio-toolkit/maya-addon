@@ -7,6 +7,7 @@ import math
 from .base import Action, warn
 from ..core.mathutils import Bounds2D, Vec2
 from ..core.mesh import MayaUVIslandManager
+from ..core.uv_nodes import MayaUVNodeManager
 
 
 def _manager() -> MayaUVIslandManager | None:
@@ -27,6 +28,11 @@ def _selection_manager() -> MayaUVIslandManager | None:
 
 def _has_component_uvs(manager: MayaUVIslandManager) -> bool:
     return any(bool(uv_ids) for uv_ids in manager.selected_uvs_by_shape.values())
+
+
+def _has_node_component_selection(manager: MayaUVIslandManager) -> bool:
+    node_kinds = {"uv", "edge", "vertex"}
+    return any(bool(kinds.intersection(node_kinds)) for kinds in manager.selection_kinds_by_shape.values())
 
 
 def _selected_bounds(manager: MayaUVIslandManager) -> Bounds2D:
@@ -70,6 +76,31 @@ def _align_selected_components(manager: MayaUVIslandManager, kind: str) -> bool:
     return True
 
 
+def _align_shells(manager: MayaUVIslandManager, kind: str) -> bool:
+    target = manager.bounds()
+    if not target.is_valid:
+        return False
+    for island in manager.islands:
+        bounds = island.bounds
+        if not bounds.is_valid:
+            continue
+        dx = dy = 0.0
+        if "MIN_X" in kind:
+            dx = target.min_x - bounds.min_x
+        elif "MAX_X" in kind:
+            dx = target.max_x - bounds.max_x
+        elif kind in ("CENTER", "ALIGN_X"):
+            dx = target.center.x - bounds.center.x
+        if "MIN_Y" in kind:
+            dy = target.min_y - bounds.min_y
+        elif "MAX_Y" in kind:
+            dy = target.max_y - bounds.max_y
+        elif kind in ("CENTER", "ALIGN_Y"):
+            dy = target.center.y - bounds.center.y
+        island.move(Vec2(dx, dy))
+    return True
+
+
 def normalize(keep_aspect: bool = False, individual: bool = False):
     manager = _manager()
     if manager is None:
@@ -101,33 +132,45 @@ def normalize(keep_aspect: bool = False, individual: bool = False):
 
 
 def align(kind: str):
+    selection_manager = MayaUVIslandManager.from_selection(include_all_if_no_components=False)
+    if selection_manager.islands and _has_node_component_selection(selection_manager):
+        return _align_selected_components(selection_manager, kind)
+
+    manager = _manager()
+    if manager is None:
+        return False
+    return _align_shells(manager, kind)
+
+
+def align_edges(axis: str = "X"):
     manager = _selection_manager()
     if manager is None:
         return False
-    if _has_component_uvs(manager):
-        return _align_selected_components(manager, kind)
-
-    target = manager.bounds()
-    if not target.is_valid:
+    if not _has_component_uvs(manager):
+        warn("Select UVs or UV edges for Align Edges.")
         return False
-    for island in manager.islands:
-        bounds = island.bounds
+
+    return _align_edge_groups(manager, axis)
+
+
+def _align_edge_groups(manager: MayaUVIslandManager, axis: str = "X") -> bool:
+    node_manager = MayaUVNodeManager.from_island_manager(manager)
+    if not node_manager.groups:
+        warn("No connected UV edge groups found for Align Edges.")
+        return False
+
+    for group in node_manager.groups:
+        bounds = group.bounds
         if not bounds.is_valid:
             continue
-        dx = dy = 0.0
-        if "MIN_X" in kind:
-            dx = target.min_x - bounds.min_x
-        elif "MAX_X" in kind:
-            dx = target.max_x - bounds.max_x
-        elif kind in ("CENTER", "ALIGN_X"):
-            dx = target.center.x - bounds.center.x
-        if "MIN_Y" in kind:
-            dy = target.min_y - bounds.min_y
-        elif "MAX_Y" in kind:
-            dy = target.max_y - bounds.max_y
-        elif kind in ("CENTER", "ALIGN_Y"):
-            dy = target.center.y - bounds.center.y
-        island.move(Vec2(dx, dy))
+        updates = {}
+        for uv_id in group.uv_ids:
+            uv = group.obj.uv_positions[uv_id]
+            if axis == "Y":
+                updates[uv_id] = Vec2(bounds.center.x, uv.y)
+            else:
+                updates[uv_id] = Vec2(uv.x, bounds.center.y)
+        group.obj.set_uv_positions(updates)
     return True
 
 
@@ -213,6 +256,7 @@ ACTIONS = [
     Action("distribute_x", "Distribute X", "Distribute shells along U.", lambda: distribute("X"), "dist_x"),
     Action("distribute_y", "Distribute Y", "Distribute shells along V.", lambda: distribute("Y"), "dist_y"),
     Action("sort", "Sort", "Sort shells by 3D position.", sort_by_3d, "align_x"),
-    Action("align_edges", "Align Edges", "Parity placeholder.", lambda: not_ready("Align Edges"), "edges_x"),
+    Action("align_edges_x", "Edges X", "Align selected UV edge groups horizontally.", lambda: align_edges("X"), "edges_x"),
+    Action("align_edges_y", "Edges Y", "Align selected UV edge groups vertically.", lambda: align_edges("Y"), "edges_y"),
     Action("orient_world", "Orient World", "Parity placeholder.", lambda: not_ready("Orient World"), "z"),
 ]

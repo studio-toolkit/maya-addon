@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from ..core.maya_api import cmds
+from ..core.maya_api import MayaUnavailable, cmds
 from ..core.undo import undo_chunk
 
 
@@ -25,5 +25,7 @@ class Action:
 
 
 def warn(message: str) -> None:
-    cmds().warning("Mio3 UV: {}".format(message))
-
+    try:
+        cmds().warning("Mio3 UV: {}".format(message))
+    except MayaUnavailable:
+        print("Mio3 UV: {}".format(message))

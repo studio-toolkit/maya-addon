@@ -46,7 +46,10 @@ class MayaUVNodeManager:
 
     @classmethod
     def from_island_manager(cls, island_manager) -> "MayaUVNodeManager":
-        manager = cls(island_manager.objects, island_manager.all_uv_ids_by_shape())
+        selected = island_manager.all_uv_ids_by_shape()
+        for shape, uv_ids in getattr(island_manager, "selected_uvs_by_shape", {}).items():
+            selected.setdefault(shape, set()).update(uv_ids)
+        manager = cls(island_manager.objects, selected)
         manager.find_groups()
         return manager
 
@@ -84,4 +87,3 @@ class MayaUVNodeManager:
                             visited.add(neighbor)
                             queue.append(neighbor)
                 self.groups.append(MayaUVNodeGroup(obj, group))
-

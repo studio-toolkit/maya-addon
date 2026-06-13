@@ -246,6 +246,7 @@ class MayaUVIsland:
 class MayaUVIslandManager:
     objects: list[MayaUVObject]
     selected_uvs_by_shape: dict[str, set[int]] = field(default_factory=dict)
+    selection_kinds_by_shape: dict[str, set[str]] = field(default_factory=dict)
     islands: list[MayaUVIsland] = field(default_factory=list)
 
     @classmethod
@@ -253,24 +254,39 @@ class MayaUVIslandManager:
         selection = current_selection()
         objects = [MayaUVObject(shape) for shape in mesh_shapes_from_selection(selection)]
         selected_by_shape = {}
+        kinds_by_shape = {}
         for obj in objects:
             aliases = obj.component_aliases()
             selected = set()
             face_ids = set()
             vertex_ids = set()
             edge_ids = set()
+            kinds = set()
             for alias in aliases:
-                selected.update(selection.uvs_by_node.get(alias, set()))
-                face_ids.update(selection.faces_by_node.get(alias, set()))
-                vertex_ids.update(selection.vertices_by_node.get(alias, set()))
-                edge_ids.update(selection.edges_by_node.get(alias, set()))
+                alias_uvs = selection.uvs_by_node.get(alias, set())
+                alias_faces = selection.faces_by_node.get(alias, set())
+                alias_vertices = selection.vertices_by_node.get(alias, set())
+                alias_edges = selection.edges_by_node.get(alias, set())
+                selected.update(alias_uvs)
+                face_ids.update(alias_faces)
+                vertex_ids.update(alias_vertices)
+                edge_ids.update(alias_edges)
+                if alias_uvs:
+                    kinds.add("uv")
+                if alias_edges:
+                    kinds.add("edge")
+                if alias_vertices:
+                    kinds.add("vertex")
+                if alias_faces:
+                    kinds.add("face")
             selected.update(obj.uv_ids_from_faces(face_ids))
             selected.update(obj.uv_ids_from_vertices(vertex_ids))
             selected.update(obj.uv_ids_from_edges(edge_ids))
             if not selected and include_all_if_no_components:
                 selected = obj.all_uv_ids()
             selected_by_shape[obj.shape] = selected
-        manager = cls(objects=objects, selected_uvs_by_shape=selected_by_shape)
+            kinds_by_shape[obj.shape] = kinds
+        manager = cls(objects=objects, selected_uvs_by_shape=selected_by_shape, selection_kinds_by_shape=kinds_by_shape)
         manager.find_islands()
         return manager
 
