@@ -20,7 +20,10 @@ class Action:
     def run(self, *args, **kwargs):
         with undo_chunk(self.label):
             result = self.callback(*args, **kwargs)
-        cmds().inViewMessage(amg="Mio3 UV: {}".format(self.label), pos="midCenter", fade=True)
+        try:
+            cmds().inViewMessage(amg="Mio3 UV: {}".format(self.label), pos="midCenter", fade=True)
+        except MayaUnavailable:
+            pass
         return result
 
 

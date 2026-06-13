@@ -35,6 +35,11 @@ def _has_node_component_selection(manager: MayaUVIslandManager) -> bool:
     return any(bool(kinds.intersection(node_kinds)) for kinds in manager.selection_kinds_by_shape.values())
 
 
+def _has_edge_align_selection(manager: MayaUVIslandManager) -> bool:
+    edge_align_kinds = {"uv", "edge", "vertex"}
+    return any(bool(kinds.intersection(edge_align_kinds)) for kinds in manager.selection_kinds_by_shape.values())
+
+
 def _selected_bounds(manager: MayaUVIslandManager) -> Bounds2D:
     bounds = Bounds2D()
     for obj in manager.objects:
@@ -146,8 +151,8 @@ def align_edges(axis: str = "X"):
     manager = _selection_manager()
     if manager is None:
         return False
-    if not _has_component_uvs(manager):
-        warn("Select UVs or UV edges for Align Edges.")
+    if not _has_component_uvs(manager) or not _has_edge_align_selection(manager):
+        warn("Select UVs, UV edges, or UV vertices for Align Edges. Face/object selection is ignored.")
         return False
 
     return _align_edge_groups(manager, axis)

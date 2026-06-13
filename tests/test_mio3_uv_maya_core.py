@@ -8,6 +8,7 @@ from mio3_uv_maya.operators.align import (
     _align_edge_groups,
     _align_selected_components,
     _align_shells,
+    _has_edge_align_selection,
     _has_node_component_selection,
 )
 from mio3_uv_maya.operators import all_actions
@@ -111,6 +112,8 @@ class TestMio3UVMayaCore(unittest.TestCase):
         )
         self.assertFalse(_has_node_component_selection(face_manager))
         self.assertTrue(_has_node_component_selection(edge_manager))
+        self.assertFalse(_has_edge_align_selection(face_manager))
+        self.assertTrue(_has_edge_align_selection(edge_manager))
 
     def test_align_edge_groups_horizontal(self):
         obj = FakeUVObject(
@@ -130,4 +133,3 @@ class TestMio3UVMayaCore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
